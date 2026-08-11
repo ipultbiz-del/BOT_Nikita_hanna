@@ -199,7 +199,6 @@ LOCATIONS = [
     
 ]
 
-
 # ── STATE ──────────────────────────────────────────
 # Стан живе в пам'яті процесу. Не робіть redeploy під час проходження квесту.
 sessions = {}
@@ -434,16 +433,13 @@ def send_hub(chat_id, user_id):
         if i in state["completed"]:
             lines.append(f"✅ {esc(loc['name'])}")
         elif i == state["current_loc"]:
-            label = "Фінальне завдання" if loc.get("is_final") else f"Завдання {i + 1}"
+            label = f"Завдання {i + 1}"
             lines.append(f"▶️ <b>{label}</b>")
         else:
             lines.append(f"🔒 Завдання {i + 1}")
 
     text = f"🗺 <b>Маршрут</b>\n<code>{esc(progress)}</code>\n\n" + "\n".join(lines)
-
-    loc = LOCATIONS[state["current_loc"]]
     button = f"📍 Розпочати завдання {state['current_loc'] + 1}"
-
     send_html(chat_id, text, reply_markup=kb(button, f"{GOLD} Допомога"))
 
 
@@ -544,12 +540,12 @@ def send_reveal(chat_id, user_id):
     send_html(chat_id, f"<i>{esc(loc['reveal_wish'])}</i>")
     time.sleep(0.4)
 
-
     next_idx = state["current_loc"] + 1
 
-    # Після останньої (6-ї) локації одразу завершуємо квест.
+    # Після 6-ї, останньої локації, одразу завершуємо квест.
     if next_idx >= len(LOCATIONS):
         complete_location(user_id)
+        time.sleep(0.4)
         send_final(chat_id, user_id)
         return
 
@@ -568,6 +564,7 @@ def complete_location(user_id):
     if i + 1 < len(LOCATIONS):
         state["current_loc"] = i + 1
     save_state(user_id, state)
+
 
 
 def send_final(chat_id, user_id):
@@ -604,7 +601,7 @@ def send_final(chat_id, user_id):
         "Сьогодні ви шукали локації. Відгадували загадки. Трималися за руки. "
         "Давали обіцянки там, де все починалось.\n\n"
         "І створили те, що не можна купити — <b>спогад.</b>\n\n"
-        "Нехай у вашій родині завжди будуть: Кохання. Довіра. Повага. Радість. Вірність. Шлях.\n\n"
+        "Нехай у вашій родині завжди будуть: Кохання. Довіра. Повага. Радість. Вірність. Початок.\n\n"
         "<i>З любов'ю, Володя та Ірина ✦</i>",
     )
 
@@ -791,16 +788,14 @@ def handle_text(message):
             "• Підказки доступні кнопкою 💡\n"
             "• На місці натисніть «Я на місці»\n"
             "• Надішліть фото або відео, коли бот попросить\n"
+
             "/start — почати спочатку\n/map — карта квесту",
         )
         return
 
-
-
     if "Розпочати завдання" in text:
         send_riddle(cid, uid)
         return
-
 
     if screen == "riddle":
         if "Підказка" in text:
@@ -836,8 +831,6 @@ def handle_text(message):
     if screen == "reveal":
         if "Наступне завдання" in text:
             complete_location(uid)
-            state = get_state(uid)
-            next_loc = LOCATIONS[state["current_loc"]]
             send_riddle(cid, uid)
             return
 
