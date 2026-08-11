@@ -35,7 +35,6 @@ LOCATIONS = [
         "id": 0,
         "name": "Маріїнський парк",
         "theme": "Кохання",
-        "pin": 4,
         "riddle": (
             "🌳 Тут серед каштанів, де місто відкривається до Дніпра,\n"
             "є місце назване на честь імператриці.\n\n"
@@ -63,7 +62,6 @@ LOCATIONS = [
         "id": 1,
         "name": "Пішохідний міст",
         "theme": "Довіра",
-        "pin": 2,
         "riddle": (
             "🌉 Він з'єднує береги без машин.\n"
             "Тут залишають замки з іменами.\n\n"
@@ -90,7 +88,6 @@ LOCATIONS = [
         "id": 2,
         "name": "Андріївський узвіз",
         "theme": "Повага",
-        "pin": 6,
         "riddle": (
             "🎨 Стара мощена вулиця з художниками та антикварями.\n"
             "Вона спускається від блакитної барокової церкви\n"
@@ -118,7 +115,6 @@ LOCATIONS = [
         "id": 3,
         "name": "Пейзажна алея",
         "theme": "Радість",
-        "pin": 4,
         "riddle": (
             "🌈 Тут живе мозаїчний кіт,\n"
             "якого всі хочуть сфотографувати.\n\n"
@@ -145,7 +141,6 @@ LOCATIONS = [
         "id": 4,
         "name": "Поштова площа",
         "theme": "Вірність",
-        "pin": None,
         "is_video": True,
         "riddle": (
             "📮 Звідси відпливали кораблі і приходили листи.\n"
@@ -176,7 +171,6 @@ LOCATIONS = [
         "id": 5,
         "name": "Володимирська гірка",
         "theme": "Шлях",
-        "pin": None,
         "riddle": (
             "⛪ Тут стоїть князь із хрестом,\n"
             "що освятив цю землю.\n\n"
@@ -205,7 +199,6 @@ LOCATIONS = [
     
 ]
 
-CORRECT_PIN = [4, 2, 6, 4]
 
 # ── STATE ──────────────────────────────────────────
 # Стан живе в пам'яті процесу. Не робіть redeploy під час проходження квесту.
@@ -217,10 +210,7 @@ def new_state():
         "screen": "cover",
         "current_loc": 0,
         "completed": [],
-        "pins": [],
         "hints_used": [0] * len(LOCATIONS),
-        "pin_awarded_locations": [],
-        "pin_verified": False,
         "photos": [],
         "started_at": time.time(),
         "signatures": [],
@@ -449,17 +439,10 @@ def send_hub(chat_id, user_id):
         else:
             lines.append(f"🔒 Завдання {i + 1}")
 
-    pins = " · ".join(str(p) for p in state["pins"])
-    pin_text = f"\n\n🔑 PIN зібрано: <b>{esc(pins)}</b>" if pins else ""
-    text = f"🗺 <b>Маршрут</b>\n<code>{esc(progress)}</code>\n\n" + "\n".join(lines) + pin_text
+    text = f"🗺 <b>Маршрут</b>\n<code>{esc(progress)}</code>\n\n" + "\n".join(lines)
 
     loc = LOCATIONS[state["current_loc"]]
-    if loc.get("is_final") and not state.get("pin_verified"):
-        button = "🔑 Відкрити фінальне завдання"
-    elif loc.get("is_final"):
-        button = "📍 Розпочати фінальне завдання"
-    else:
-        button = f"📍 Розпочати завдання {state['current_loc'] + 1}"
+    button = f"📍 Розпочати завдання {state['current_loc'] + 1}"
 
     send_html(chat_id, text, reply_markup=kb(button, f"{GOLD} Допомога"))
 
@@ -561,22 +544,13 @@ def send_reveal(chat_id, user_id):
     send_html(chat_id, f"<i>{esc(loc['reveal_wish'])}</i>")
     time.sleep(0.4)
 
-    if loc["pin"] is not None and loc["id"] not in state["pin_awarded_locations"]:
-        state["pins"].append(loc["pin"])
-        state["pin_awarded_locations"].append(loc["id"])
-        save_state(user_id, state)
-        send_html(chat_id, f"🔑 <b>PIN цієї локації:</b>\n\n<code>{loc['pin']}</code>\n\n<i>Запам'ятайте цю цифру!</i>")
 
     next_idx = state["current_loc"] + 1
 
-    # Якщо це остання (6-та) локація — наступного завдання вже немає.
-    # Переходимо до введення зібраного PIN-коду.
+    # Після останньої (6-ї) локації одразу завершуємо квест.
     if next_idx >= len(LOCATIONS):
-        bot.send_message(
-            chat_id,
-            "Усі 6 завдань пройдено 🌸\n\nЗалишився фінальний код 👇",
-            reply_markup=kb("🔑 Ввести PIN-код"),
-        )
+        complete_location(user_id)
+        send_final(chat_id, user_id)
         return
 
     bot.send_message(
@@ -596,39 +570,6 @@ def complete_location(user_id):
     save_state(user_id, state)
 
 
-def send_pin_screen(chat_id, user_id):
-    state = get_state(user_id)
-    state["screen"] = "pin"
-    save_state(user_id, state)
-    pins = " · ".join(str(p) for p in state["pins"]) if state["pins"] else "—"
-    send_html(
-        chat_id,
-        "🏆 <b>Введіть PIN-код</b>\n\n"
-        "Ви зібрали цифри з попередніх локацій.\n\n"
-        f"🔑 Ваші цифри: <code>{esc(pins)}</code>\n\n"
-        "Введіть 4-значний PIN-код 👇",
-        reply_markup=kb("← Карта квесту"),
-    )
-
-
-def check_pin(chat_id, user_id, text):
-    state = get_state(user_id)
-    digits = [int(c) for c in text if c.isdigit()]
-    if digits == CORRECT_PIN:
-        state["pin_verified"] = True
-
-        i = state["current_loc"]
-        if i not in state["completed"]:
-            state["completed"].append(i)
-
-        save_state(user_id, state)
-        send_html(chat_id, "🔓 <b>Код правильний!</b>\n\nКвест пройдено 🌸")
-        time.sleep(0.4)
-        send_final(chat_id, user_id)
-    else:
-        bot.send_message(chat_id, "❌ Невірний код. Перевірте цифри з локацій і спробуйте ще.", reply_markup=kb("← Карта квесту"))
-
-
 def send_final(chat_id, user_id):
     state = get_state(user_id)
     state["screen"] = "final"
@@ -646,7 +587,6 @@ def send_final(chat_id, user_id):
         f"🗺 Локацій пройдено: <b>{len(state['completed'])}</b>\n"
         f"📸 Фото збережено: <b>{photos}</b>\n"
         f"⏱ Час пригоди: <b>{elapsed} хв</b>\n"
-        "🔑 PIN-код: <b>4 · 2 · 6 · 4</b>\n"
         "💍 Обітниці: ✓\n\n"
         "━━━━━━━━━━━━━━━",
     )
@@ -664,7 +604,7 @@ def send_final(chat_id, user_id):
         "Сьогодні ви шукали локації. Відгадували загадки. Трималися за руки. "
         "Давали обіцянки там, де все починалось.\n\n"
         "І створили те, що не можна купити — <b>спогад.</b>\n\n"
-        "Нехай у вашій родині завжди будуть: Кохання. Довіра. Повага. Радість. Вірність. Початок.\n\n"
+        "Нехай у вашій родині завжди будуть: Кохання. Довіра. Повага. Радість. Вірність. Шлях.\n\n"
         "<i>З любов'ю, Володя та Ірина ✦</i>",
     )
 
@@ -851,29 +791,16 @@ def handle_text(message):
             "• Підказки доступні кнопкою 💡\n"
             "• На місці натисніть «Я на місці»\n"
             "• Надішліть фото або відео, коли бот попросить\n"
-            "• PIN збирається автоматично\n\n"
             "/start — почати спочатку\n/map — карта квесту",
         )
         return
 
-    if "Відкрити фінальне завдання" in text:
-        send_pin_screen(cid, uid)
-        return
 
-    if "Розпочати фінальне завдання" in text:
-        if state.get("pin_verified"):
-            send_riddle(cid, uid)
-        else:
-            send_pin_screen(cid, uid)
-        return
 
     if "Розпочати завдання" in text:
         send_riddle(cid, uid)
         return
 
-    if "Ввести PIN-код" in text:
-        send_pin_screen(cid, uid)
-        return
 
     if screen == "riddle":
         if "Підказка" in text:
@@ -907,27 +834,12 @@ def handle_text(message):
         return
 
     if screen == "reveal":
-        if "Завершити квест" in text and loc.get("is_final"):
-            complete_location(uid)
-            send_final(cid, uid)
-            return
         if "Наступне завдання" in text:
             complete_location(uid)
             state = get_state(uid)
             next_loc = LOCATIONS[state["current_loc"]]
-            if next_loc.get("is_final") and not state.get("pin_verified"):
-                send_hub(cid, uid)
-            else:
-                send_riddle(cid, uid)
+            send_riddle(cid, uid)
             return
-
-    if screen == "pin":
-        digits = "".join(c for c in text if c.isdigit())
-        if len(digits) != 4:
-            bot.send_message(cid, "Введіть рівно 4 цифри PIN-коду 👇")
-            return
-        check_pin(cid, uid, digits)
-        return
 
     if screen == "final" and "Відкрити сюрприз" in text:
         send_proposal(cid, uid)
