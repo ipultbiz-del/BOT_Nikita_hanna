@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Memory Quest Telegram Bot
-Аня & Нікіта ·  {date} · Київ
+Аня & Нікіта · {EVENT_DATE} · Київ
 
 Встановлення:
-  pip install pyTelegramBotAPI
+  pip install pyTelegramBotAPI Pillow
 
 Запуск:
   BOT_TOKEN=your_token python memory_quest_bot.py
@@ -15,9 +15,13 @@ import telebot
 from telebot import types
 import json
 import time
+from datetime import datetime
+from io import BytesIO
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 
 # ── CONFIG ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+EVENT_DATE = os.environ.get("EVENT_DATE") or datetime.now().strftime("%d.%m.%Y")
 # Замінити на реальний Telegram ID Ані або Нікіти
 ALLOWED_USERS = []  # [] = всі можуть, або [123456789, 987654321]
 
@@ -264,6 +268,151 @@ def get_state(user_id):
 def save_state(user_id, state):
     sessions[user_id] = state
 
+
+def _font(size, bold=False):
+    """Повертає шрифт з підтримкою кирилиці, якщо він є у контейнері."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
+
+
+def _photo_items(state):
+    """Витягує тільки фото. Відео та пропуски у колаж не потрапляють."""
+    result = []
+    for item in state.get("photos", []):
+        if not item:
+            continue
+        # Новий формат
+        if isinstance(item, dict):
+            if item.get("type") == "photo" and item.get("file_id"):
+                result.append(item)
+        # Сумісність зі старими сесіями, де зберігався лише file_id
+        elif isinstance(item, str):
+            result.append({"type": "photo", "file_id": item, "location_name": ""})
+    return result
+
+
+def create_memory_collage(user_id):
+    """
+    Завантажує надіслані в квесті фото з Telegram і формує JPEG-колаж.
+    Повертає BytesIO або None, якщо фото немає/колаж не вдалося створити.
+    """
+    state = get_state(user_id)
+    items = _photo_items(state)
+    if not items:
+        return None
+
+    images = []
+    for item in items[:6]:  # у поточному маршруті максимум 6 фото-точок
+        try:
+            tg_file = bot.get_file(item["file_id"])
+            raw = bot.download_file(tg_file.file_path)
+            image = Image.open(BytesIO(raw)).convert("RGB")
+            images.append((image, item.get("location_name", "")))
+        except Exception as exc:
+            print(f"Не вдалося завантажити фото для колажу: {exc}")
+
+    if not images:
+        return None
+
+    # Вертикальний пам'ятний постер: 2 колонки × до 3 рядків.
+    canvas_w = 1600
+    margin = 70
+    gap = 28
+    header_h = 250
+    footer_h = 150
+    cell_w = (canvas_w - margin * 2 - gap) // 2
+    cell_h = 620
+    rows = (len(images) + 1) // 2
+    canvas_h = header_h + rows * cell_h + max(0, rows - 1) * gap + footer_h + margin
+
+    bg = (250, 246, 242)
+    canvas = Image.new("RGB", (canvas_w, canvas_h), bg)
+    draw = ImageDraw.Draw(canvas)
+
+    title_font = _font(72, bold=True)
+    subtitle_font = _font(34)
+    label_font = _font(26, bold=True)
+    footer_font = _font(30)
+
+    # Заголовок
+    title = "Аня & Нікіта"
+    subtitle = f"Memory Quest · {EVENT_DATE} · Київ"
+    title_box = draw.textbbox((0, 0), title, font=title_font)
+    subtitle_box = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+    draw.text(((canvas_w - (title_box[2]-title_box[0]))/2, 55), title, fill=(91, 56, 62), font=title_font)
+    draw.text(((canvas_w - (subtitle_box[2]-subtitle_box[0]))/2, 150), subtitle, fill=(126, 100, 103), font=subtitle_font)
+
+    # Тонка декоративна лінія
+    draw.line((margin, 220, canvas_w-margin, 220), fill=(210, 177, 174), width=3)
+
+    for i, (image, location_name) in enumerate(images):
+        row = i // 2
+        col = i % 2
+        x = margin + col * (cell_w + gap)
+        y = header_h + row * (cell_h + gap)
+
+        # Поле під підпис локації
+        photo_h = cell_h - 62
+        fitted = ImageOps.fit(image, (cell_w, photo_h), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+
+        # Легка біла рамка
+        framed = ImageOps.expand(fitted, border=8, fill="white")
+        framed = framed.resize((cell_w, photo_h))
+        canvas.paste(framed, (x, y))
+
+        label = location_name or f"Спогад {i+1}"
+        # Номер + підпис, щоб колаж читався як маршрут.
+        label = f"{i+1}. {label}"
+        bbox = draw.textbbox((0, 0), label, font=label_font)
+        max_w = cell_w - 12
+        if bbox[2] - bbox[0] > max_w:
+            # Проста обрізка довгого підпису.
+            while len(label) > 4 and draw.textbbox((0,0), label + "…", font=label_font)[2] > max_w:
+                label = label[:-1]
+            label += "…"
+        draw.text((x + 6, y + photo_h + 16), label, fill=(86, 72, 73), font=label_font)
+
+    footer_y = canvas_h - footer_h + 25
+    footer = "Один день. Один маршрут. Спогад на все життя."
+    fb = draw.textbbox((0,0), footer, font=footer_font)
+    draw.text(((canvas_w-(fb[2]-fb[0]))/2, footer_y), footer, fill=(126, 100, 103), font=footer_font)
+
+    output = BytesIO()
+    output.name = "Anya_Nikita_Memory_Quest.jpg"
+    canvas.save(output, format="JPEG", quality=90, optimize=True)
+    output.seek(0)
+    return output
+
+
+def send_memory_collage(chat_id, user_id):
+    """Створює колаж і відправляє його у Telegram."""
+    try:
+        collage = create_memory_collage(user_id)
+        if collage is None:
+            bot.send_message(chat_id, "📸 Для колажу поки немає фотографій.")
+            return False
+        bot.send_photo(
+            chat_id,
+            collage,
+            caption=(
+                "🌸 *Ваш Memory Quest — в одному кадрі*\n\n"
+                "Збережіть цей колаж. Через роки він поверне вас у цей день ✨"
+            ),
+            parse_mode="Markdown"
+        )
+        return True
+    except Exception as exc:
+        print(f"Помилка створення колажу: {exc}")
+        bot.send_message(chat_id, "📸 Фото збережені, але колаж зараз не вдалося зібрати.")
+        return False
+
 # ── KEYBOARDS ──────────────────────────────────────
 def kb(*buttons, row_width=1):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=row_width)
@@ -300,7 +449,7 @@ def send_cover(chat_id, user_id):
         (
             f"{ROSE}{ROSE}{ROSE}\n\n"
             f"*Аня & Нікіта*\n"
-            f" {date} · Київ\n\n"
+            f" {EVENT_DATE} · Київ\n\n"
             f"━━━━━━━━━━━━━━━\n\n"
             f"Любі наші Аня та Нікіта\\!\n\n"
             f"Сьогодні ми хочемо подарувати вам не річ і не конверт\\.\n\n"
@@ -623,7 +772,7 @@ def send_final(chat_id, user_id):
     save_state(user_id, state)
 
     elapsed = int((time.time() - state["started_at"]) / 60)
-    photos = len(state["photos"])
+    photos = len(_photo_items(state))
 
     # Celebration
     bot.send_message(chat_id, "🎊🌸🎊🌸🎊🌸🎊")
@@ -682,6 +831,13 @@ def send_final(chat_id, user_id):
     )
 
     time.sleep(1.5)
+
+    # Memory collage
+    if photos > 0:
+        bot.send_message(chat_id, "📸 А тепер — ваш день в одному кадрі…")
+        time.sleep(0.8)
+        send_memory_collage(chat_id, user_id)
+        time.sleep(1.2)
 
     # Surprise
     bot.send_message(
@@ -810,7 +966,13 @@ def handle_photo(message):
     state = get_state(uid)
 
     if state["screen"] == "task":
-        state["photos"].append(message.photo[-1].file_id)
+        loc = LOCATIONS[state["current_loc"]]
+        state["photos"].append({
+            "type": "photo",
+            "file_id": message.photo[-1].file_id,
+            "location_id": loc["id"],
+            "location_name": loc["name"],
+        })
         save_state(uid, state)
         bot.send_message(cid, f"{CAMERA} Фото збережено в книзі спогадів ✓")
         time.sleep(0.5)
@@ -824,7 +986,13 @@ def handle_video(message):
     state = get_state(uid)
 
     if state["screen"] == "task":
-        state["photos"].append(message.video.file_id)
+        loc = LOCATIONS[state["current_loc"]]
+        state["photos"].append({
+            "type": "video",
+            "file_id": message.video.file_id,
+            "location_id": loc["id"],
+            "location_name": loc["name"],
+        })
         save_state(uid, state)
         bot.send_message(cid, f"{VIDEO} Відео-капсула збережена на 20 років ✓")
         time.sleep(0.5)
