@@ -880,10 +880,12 @@ def handle_text(message):
 
     # ── RIDDLE ──
     if screen == "riddle":
+        # Перехоплюємо всі кнопки ДО check_answer
         if "Підказка" in text:
             send_hint(cid, uid)
             return
-        if "карту" in text.lower() or "🗺" in text:
+        if ("карту" in text.lower() or "Карту" in text
+                or "Відкрити" in text or "🗺" in text):
             bot.send_message(
                 cid,
                 "Відкрий Google Maps:",
@@ -893,6 +895,10 @@ def handle_text(message):
                 )
             )
             return
+        if "Карта квесту" in text or "← Карта" in text:
+            send_hub(cid, uid)
+            return
+        # Тільки якщо це реальна текстова відповідь
         check_answer(cid, uid, text)
         return
 
