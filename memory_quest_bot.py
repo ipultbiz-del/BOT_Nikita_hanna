@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Memory Quest Telegram Bot
-Аня & Нікіта · 08.08.2026 · Київ
+Аня & Нікіта ·  {date} · Київ
 
 Встановлення:
   pip install pyTelegramBotAPI
