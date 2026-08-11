@@ -478,7 +478,7 @@ def send_riddle(chat_id, user_id):
         "━━━━━━━━━━━━━━━\n\n"
         "🔍 <b>ЗАГАДКА</b>\n\n"
         f"{esc(loc['riddle'])}",
-        reply_markup=kb("💡 Підказка", "🗺 Відкрити карту", "← Карта квесту"),
+        reply_markup=kb("💡 Підказка", "← Карта квесту"),
     )
     bot.send_message(chat_id, "Напишіть назву місця 👇")
 
@@ -523,7 +523,7 @@ def check_answer(chat_id, user_id, text):
         bot.send_message(
             chat_id,
             "Спробуйте ще… 🤔 Підказка допоможе, якщо потрібно.",
-            reply_markup=kb("💡 Підказка", "🗺 Відкрити карту", "← Карта квесту"),
+            reply_markup=kb("💡 Підказка", "← Карта квесту"),
         )
 
 
@@ -567,11 +567,18 @@ def send_reveal(chat_id, user_id):
         save_state(user_id, state)
         send_html(chat_id, f"🔑 <b>PIN цієї локації:</b>\n\n<code>{loc['pin']}</code>\n\n<i>Запам'ятайте цю цифру!</i>")
 
-    if loc.get("is_final"):
-        bot.send_message(chat_id, "Фінальний крок 👇", reply_markup=kb("🏁 Завершити квест"))
+    next_idx = state["current_loc"] + 1
+
+    # Якщо це остання (6-та) локація — наступного завдання вже немає.
+    # Переходимо до введення зібраного PIN-коду.
+    if next_idx >= len(LOCATIONS):
+        bot.send_message(
+            chat_id,
+            "Усі 6 завдань пройдено 🌸\n\nЗалишився фінальний код 👇",
+            reply_markup=kb("🔑 Ввести PIN-код"),
+        )
         return
 
-    next_idx = state["current_loc"] + 1
     bot.send_message(
         chat_id,
         "Продовжуємо? 👇",
@@ -609,10 +616,15 @@ def check_pin(chat_id, user_id, text):
     digits = [int(c) for c in text if c.isdigit()]
     if digits == CORRECT_PIN:
         state["pin_verified"] = True
+
+        i = state["current_loc"]
+        if i not in state["completed"]:
+            state["completed"].append(i)
+
         save_state(user_id, state)
-        send_html(chat_id, "🔓 <b>Код правильний!</b>\n\nФінальна локація відкрита 🌸")
+        send_html(chat_id, "🔓 <b>Код правильний!</b>\n\nКвест пройдено 🌸")
         time.sleep(0.4)
-        send_riddle(chat_id, user_id)
+        send_final(chat_id, user_id)
     else:
         bot.send_message(chat_id, "❌ Невірний код. Перевірте цифри з локацій і спробуйте ще.", reply_markup=kb("← Карта квесту"))
 
@@ -859,12 +871,13 @@ def handle_text(message):
         send_riddle(cid, uid)
         return
 
+    if "Ввести PIN-код" in text:
+        send_pin_screen(cid, uid)
+        return
+
     if screen == "riddle":
         if "Підказка" in text:
             send_hint(cid, uid)
-            return
-        if "Відкрити карту" in text or "🗺" in text:
-            bot.send_message(cid, "Відкрийте Google Maps:", reply_markup=kb_url(f"📍 Маршрут до {loc['name']}", loc["maps_url"]))
             return
         check_answer(cid, uid, text)
         return
